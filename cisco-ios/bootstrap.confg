@@ -1,0 +1,25 @@
+! testing config
+hostname sw-staging1-3k
+!
+event manager applet save_cfg_after_autoinstall authorization bypass
+ event syslog pattern "SYS-5-CONFIG_I: Configured from tftp"
+ action 1.0 cli command "write memory"
+!
+event manager applet bootstrap
+ event timer countdown time 30 maxrun 900
+ action 001 cli command "enable"
+ action 002 cli command "config t"
+ action 003 cli command "file prompt quiet"
+ action 004 cli command "end"
+ action 005 cli command "mkdir flash:policies"
+ action 006 cli command "copy tftp://10.10.66.2/cisco-ios/bootstrap_sw_ios.tcl flash:policies"
+ action 007 cli command "config t"
+ action 008 cli command "enable password stage"
+ action 009 cli command "line vty 0 4"
+ action 010 cli command "password stage"
+ action 011 cli command "event manager directory user policy flash:policies"
+ action 012 cli command "event manager policy bootstrap_sw_ios.tcl"
+ action 013 cli command "end"
+ action 014 publish-event sub-system 798 type 1 arg1 BOOT
+!
+end
