@@ -6,7 +6,7 @@ event manager applet save_cfg_after_autoinstall authorization bypass
  action 1.0 cli command "write memory"
 !
 event manager applet bootstrap
- event timer countdown time 30 maxrun 900
+ event timer countdown time 30 maxrun 9000
  action 001 cli command "enable"
  action 002 cli command "config t"
  action 003 cli command "file prompt quiet"
