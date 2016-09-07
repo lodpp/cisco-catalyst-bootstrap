@@ -82,7 +82,7 @@ if { ! [regexp {System image file is "([^:]+:[^"]+)"} $result -> imagepath] } { 
 }
 action_syslog msg "AUTOCONF: Image Path is: '$imagepath'"  
 
-# lets work on image file
+# lets work on image file and get the image filename, the image directory
 set fstype {flash:}
 set rawimagef [file tail $imagepath]
 action_syslog msg "AUTOCONF: raw image file is: '$rawimagef'" 
@@ -112,26 +112,32 @@ if { [regexp {WS-C3560X} $pid]} {
     exit 1
 }
 
-# Download the new image
-action_syslog msg "AUTOCONF: Downloading Image"
-if { [catch {cli_exec $cli(fd) "copy $TFTP_URL/image/ios/$image $fstype"} result] } {
-  error $result $errorInfo
-}
-action_syslog msg "AUTOCONF: Image Downloaded"
-
-# md5 check
-action_syslog msg "AUTOCONF: Computing MD5 Image '$fstype$image' with md5 '$imagemd5'"
-if { [catch {cli_exec $cli(fd) "verify /md5 $fstype$image $imagemd5"} result] } {
-  error $result $errorInfo
-}
-
-#The output will show a 'Verified' if the md5 given in args match the result
-if { [regexp {Verified} $result] } {
-  action_syslog msg "AUTOCONF: The md5 check is okay"
+# Download the new image if needed
+if { [string compare $image $rawimagef] == 0 } {
+  action_syslog msg "AUTOCONF: The Switch is already on the correct image '$image'"
 } else { 
-  action_syslog msg "AUTOCONF: The md5 check failed - the image might be corrupted"
-  puts "ERROR: The MD5 of the downloaded image is not the one that it should be, do you download your img from torrent :) ?"
-  exit 1
+  action_syslog msg "AUTOCONF: The image needs to be upgraded from '$rawimagef' to '$image'"
+
+  action_syslog msg "AUTOCONF: Downloading Image"
+  if { [catch {cli_exec $cli(fd) "copy $TFTP_URL/image/ios/$image $fstype"} result] } {
+    error $result $errorInfo
+  }
+  action_syslog msg "AUTOCONF: Image Downloaded"
+
+  # md5 check
+  action_syslog msg "AUTOCONF: Computing MD5 Image '$fstype$image' with md5 '$imagemd5'"
+  if { [catch {cli_exec $cli(fd) "verify /md5 $fstype$image $imagemd5"} result] } {
+    error $result $errorInfo
+  }
+
+  #The output will show a 'Verified' if the md5 given in args match the result
+  if { [regexp {Verified} $result] } {
+    action_syslog msg "AUTOCONF: The md5 check is okay"
+  } else { 
+    action_syslog msg "AUTOCONF: The md5 check failed - the image might be corrupted"
+    puts "ERROR: The MD5 of the downloaded image is not the one that it should be, do you download your img from torrent :) ?"
+    exit 1
+  }
 }
 
 # Download the provisionned config in the startup config
@@ -164,7 +170,7 @@ action_syslog msg "AUTOCONF: BOOTVAR set"
 action_syslog msg "AUTOCONF COMPLETE: Switch is ready, go for a reload in 10secs"
 
 # Close VTY session
-# Always put a sleep X sec ( in tcl 'after XX' where X is in msec
+# Always put a sleep X sec ( in tcl 'after XX' where X is in msec )
 # without it, you can miss syslogs, so you might that all the step are not completed but yes they are
 after 5000
 catch {cli_close $cli(fd) $cli(tty_id)}

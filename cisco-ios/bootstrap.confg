@@ -1,6 +1,8 @@
 ! testing config
 hostname staging-ios-catalyst-xk
 !
+logging host 10.10.66.2
+!
 event manager applet save_cfg_after_autoinstall authorization bypass
  event syslog pattern "SYS-5-CONFIG_I: Configured from tftp"
  action 1.0 cli command "write memory"
