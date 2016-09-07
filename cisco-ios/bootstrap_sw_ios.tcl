@@ -137,9 +137,10 @@ if { [regexp {Verified} $result] } {
 # Download the provisionned config in the startup config
 #( not the running - as we may not run the good IOS, some config migth not be applied )
 # and then, a fresh boot is always good :)
-action_syslog msg "AUTOCONF: Downloading the config for '$sn'"
+action_syslog msg "AUTOCONF: Downloading the config for '$sn' at '$TFTP_URL/configs/FDxxxxxxxxF.confg
+'"
 set config $sn.confg
-if { [catch {cli_exec $cli(fd) "copy $TFTP_URL/device-configs/$config startup-config"} result] } {
+if { [catch {cli_exec $cli(fd) "copy $TFTP_URL/configs/$config startup-config"} result] } {
         error $result $errorInfo
 }
 action_syslog msg "AUTOCONF: Config for '$sn' saved in startup-config"
@@ -160,12 +161,12 @@ if { $image != {} } {
 }
 action_syslog msg "AUTOCONF: BOOTVAR set"
 
-action_syslog msg "AUTOCONF COMPLETE: Switch is ready, go for a reload in 5secs"
+action_syslog msg "AUTOCONF COMPLETE: Switch is ready, go for a reload in 10secs"
 
 # Close VTY session
 # Always put a sleep X sec ( in tcl 'after XX' where X is in msec
 # without it, you can miss syslogs, so you might that all the step are not completed but yes they are
-after 3000
+after 5000
 catch {cli_close $cli(fd) $cli(tty_id)}
-after 2000
+after 5000
 action_reload

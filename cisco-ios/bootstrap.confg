@@ -1,5 +1,5 @@
 ! testing config
-hostname sw-staging1-3k
+hostname staging-ios-catalyst-xk
 !
 event manager applet save_cfg_after_autoinstall authorization bypass
  event syslog pattern "SYS-5-CONFIG_I: Configured from tftp"
