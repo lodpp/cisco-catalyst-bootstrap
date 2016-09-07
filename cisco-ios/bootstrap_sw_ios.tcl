@@ -1,5 +1,5 @@
 ::cisco::eem::description "This policy bootstraps a switch using the serial number and PID parameters"
-::cisco::eem::event_register_appl tag timer sub_system 798 type 1 maxrun 2400
+::cisco::eem::event_register_appl tag timer sub_system 798 type 1 maxrun 18000 
 ::cisco::eem::event_register_none tag none
 ::cisco::eem::trigger {
     ::cisco::eem::correlate event timer or event none
@@ -7,10 +7,8 @@
 
 namespace import ::cisco::eem::*
 namespace import ::cisco::lib::*
-#namespace import ::http::*
 
 action_syslog msg "AUTOCONF: STARTING"
-
 
 # CHANGE ME to the tftp Address !!!
 set ZTP_IP {10.10.66.2}
@@ -31,16 +29,8 @@ proc init {} {
 }
 init
 
-proc url_encode {str} {
-    variable map
-    variable alphanumeric
-
-    regsub -all \[^$alphanumeric\] $str {$map(&)} str
-    regsub -all {[][{})\\]\)} $str {\\&} str
-    return [subst -nocommand $str]
-}
-
 # open a CLI session - it will request a free VTY line available
+# during provisionning, wild guess nobody will be on the switch
 if { [catch {cli_open} result] } {
     error $result $errorInfo
 }
@@ -122,61 +112,41 @@ if { [regexp {WS-C3560X} $pid]} {
     exit 1
 }
 
-# Compare the requested image VS the the running image
-# Download the new one if needed 
-if { [regexp {$image} $imagepath ] } {
-  action_syslog msg "AUTOCONF: The Running Image fits the Needed Image - We Do Not Need To Upgrade"
-} else {
-  action_syslog msg "AUTOCONF: We need to upgrade the image"
+# Download the new image
+action_syslog msg "AUTOCONF: Downloading Image"
+if { [catch {cli_exec $cli(fd) "copy $TFTP_URL/image/ios/$image $fstype"} result] } {
+  error $result $errorInfo
+}
+action_syslog msg "AUTOCONF: Image Downloaded"
 
-  # Download itself
-  action_syslog msg "AUTOCONF: Downloading Image"
-  if { [catch {cli_exec $cli(fd) "copy $TFTP_URL/image/ios/$image $fstype"} result] } {
-    error $result $errorInfo
-  }
-  action_syslog msg "AUTOCONF: Image Downloaded"
+# md5 check
+action_syslog msg "AUTOCONF: Computing MD5 Image '$fstype$image' with md5 '$imagemd5'"
+if { [catch {cli_exec $cli(fd) "verify /md5 $fstype$image $imagemd5"} result] } {
+  error $result $errorInfo
+}
 
-  # md5 check
-  action_syslog msg "AUTOCONF: Computing MD5 Image '$fstype$image'"
-  if { [catch {cli_exec $cli(fd) "verify /md5 $fstype$image"} result] } {
-    error $result $errorInfo
-  }
-  regexp {= ([A-Fa-f0-9]+)} $result -> computedmd5
-  action_syslog msg "AUTOCONF: MD5 computed: '$computedmd5'"
-
-  # Comparing computed md5 with provided md5
-  action_syslog msg "AUTOCONF: Comparing computed md5 with the known md5"
-  set compare [string compare $computedmd5 $imagemd5]
-
-  # 0 = string are the same, 1 or -1 indicates a difference
-  if { $compare != 0 } {
-    action_syslog msg "AUTOCONF: The md5 check failed - the image might be corrupted"
-    puts "ERROR: The MD5 of the downloaded image is not the one that it should be, do you download your img from torrent :) ?"
-    exit 1
-  } else {
-    action_syslog msg "AUTOCONF: The md5 check is okay"
-  }
+#The output will show a 'Verified' if the md5 given in args match the result
+if { [regexp {Verified} $result] } {
+  action_syslog msg "AUTOCONF: The md5 check is okay"
+} else { 
+  action_syslog msg "AUTOCONF: The md5 check failed - the image might be corrupted"
+  puts "ERROR: The MD5 of the downloaded image is not the one that it should be, do you download your img from torrent :) ?"
+  exit 1
 }
 
 # Download the provisionned config in the startup config
 #( not the running - as we may not run the good IOS, some config migth not be applied )
 # and then, a fresh boot is always good :)
+action_syslog msg "AUTOCONF: Downloading the config for '$sn'"
 set config $sn.confg
-
-if { [catch {cli_exec $cli(fd) "copy $TFTP_URL/device-configs/$config startup config"} result] } {
+if { [catch {cli_exec $cli(fd) "copy $TFTP_URL/device-configs/$config startup-config"} result] } {
         error $result $errorInfo
 }
+action_syslog msg "AUTOCONF: Config for '$sn' saved in startup-config"
 
-
-# loop reboot if the switch is not registered
-#if { $image == {} && $config == {} } {
-#    puts "Switch not registered; rebooting..."
-#    after 60000
-#    action_reload
-#}
 action_syslog msg "AUTOCONF: Setting BOOTVAR"
 if { $image != {} } {
-    if { [catch {cli_exec $cli(fd) "config t"} result] } {
+    if { [catch {cli_exec $cli(fd) "config terminal"} result] } {
         error $result $errorInfo
     }
 
@@ -190,9 +160,12 @@ if { $image != {} } {
 }
 action_syslog msg "AUTOCONF: BOOTVAR set"
 
+action_syslog msg "AUTOCONF COMPLETE: Switch is ready, go for a reload in 5secs"
+
 # Close VTY session
+# Always put a sleep X sec ( in tcl 'after XX' where X is in msec
+# without it, you can miss syslogs, so you might that all the step are not completed but yes they are
+after 3000
 catch {cli_close $cli(fd) $cli(tty_id)}
-
-action_syslog msg "AUTOCONF COMPLETE: Switch is ready, go for a reload"
-
+after 2000
 action_reload

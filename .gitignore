@@ -1,0 +1,5 @@
+# ignore list
+# swp/tempo file for vim
+*.swp
+*~
+*.bin
