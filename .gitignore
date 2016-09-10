@@ -2,4 +2,5 @@
 # swp/tempo file for vim
 *.swp
 *~
+# do not upload sofware image
 *.bin
