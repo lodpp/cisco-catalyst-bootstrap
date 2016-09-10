@@ -12,24 +12,9 @@ action_syslog msg "AUTOCONF: STARTING"
 
 # CHANGE ME to the tftp Address !!!
 set ZTP_IP {10.10.66.2}
-
 set TFTP_URL "tftp://$ZTP_IP"
 
-# Found on a cisco script using http request a lot to get info # need to reverse what is the purpose of the init
-proc init {} {
-    variable map
-    variable alphanumeric a-zA-Z0-9
-    for {set i 0} {$i <= 256} {incr i} {
-        set c [format %c $i]
-        if { ! [string match \[$alphanumeric\] $c] } {
-            set map($c) %[format %.2x $i]
-        }
-    }
-    array set map { " " + \n %0d%0a }
-}
-init
-
-# open a CLI session - it will request a free VTY line available
+# Open a CLI session - it will request a free VTY line available
 # during provisionning, wild guess nobody will be on the switch
 if { [catch {cli_open} result] } {
     error $result $errorInfo
@@ -74,7 +59,10 @@ if { ! [regexp {Version ([^,]+),} $result -> vers] } {
 }
 action_syslog msg "AUTOCONF: Running Version is: '$vers'"  
 
-# most probably, the file path will be at the root of flash:
+# Lets find the actual image path - usually at the root of flash: but could be
+# in a sub-directory.
+# If we don't need to change the running image, the script won't touch the path
+# If we need to update the image, I will put it at the root of flash: because it's easier 
 action_syslog msg "AUTOCONF: Getting Image Path Location"
 if { ! [regexp {System image file is "([^:]+:[^"]+)"} $result -> imagepath] } { ;#"
     puts "ERROR: Failed to find system image file in '$result'"
@@ -82,7 +70,7 @@ if { ! [regexp {System image file is "([^:]+:[^"]+)"} $result -> imagepath] } { 
 }
 action_syslog msg "AUTOCONF: Image Path is: '$imagepath'"  
 
-# lets work on image file and get the image filename, the image directory
+# Let's work on image file and get the image filename and the image directory
 set fstype {flash:}
 set rawimagef [file tail $imagepath]
 action_syslog msg "AUTOCONF: raw image file is: '$rawimagef'" 
@@ -92,25 +80,29 @@ regexp {([^:]+:)} $imagepath -> fstype
 
 
 # From the PID, set the correct image to download
+
+# Note :
+# I put the smartness to find the correct image ( and md5 ) in the TCL as a starting point,
+# but it's against my will to get a bootstrap script as light as possible, anyway it works :)
 set image {}
 set imagemd5 {}
 
-# I put the smartness to find the correct image ( and md5 ) in the TCL, but it should be somewhere else
-# to keep the TCL as light as possible ( and avoid modification , so avoid testing after each modif )
-# anyway it works :)
-if { [regexp {WS-C3560X} $pid]} {
-## c3560e-universalk9-mz.150-1.SE
-#  set image {c3560e-universalk9-mz.150-1.SE.bin}
-#  set imagemd5 {32333e40e3819a1de4d5aa48f8e7bcef}
-
-## c3560e-universalk9-mz.150-2.SE10
-  set image {c3560e-universalk9-mz.150-2.SE10.bin}
-  set imagemd5 {d8c599ebcb365d70c7c97c9f3055b609}
-  action_syslog msg "AUTOCONF: Image to use is: '$image' with md5: '$imagemd5'"
-} else {
+# The 'switch' conditional command is perfect at matching the image against the pid :)
+switch -regexp $pid {
+  "WS-C3560X" {
+    set image {c3560e-universalk9-mz.150-2.SE10.bin}
+    set imagemd5 {d8c599ebcb365d70c7c97c9f3055b609}
+  }
+  "WS-C3560CX" {
+    set image {c3560cx-universalk9-mz.152-3.E3.bin}
+    set imagemd5 {a109039eb9e8b4870dfe1df2485c775e}
+  }
+  default {
     puts "ERROR: Failed to find the corresponding image to use with '$pid'"
     exit 1
+  }
 }
+action_syslog msg "AUTOCONF: Image to use is: '$image' with md5: '$imagemd5'"
 
 # Download the new image if needed
 if { [string compare $image $rawimagef] == 0 } {
@@ -122,7 +114,12 @@ if { [string compare $image $rawimagef] == 0 } {
   if { [catch {cli_exec $cli(fd) "copy $TFTP_URL/image/ios/$image $fstype"} result] } {
     error $result $errorInfo
   }
-  action_syslog msg "AUTOCONF: Image Downloaded"
+  if { [regexp {"bytes copied in"} $result] } {                                                                           
+    action_syslog msg "AUTOCONF: Image Downloaded"
+  } else {
+    action_syslog msg "AUTOCONF: Unable to fetch the image '$image' at '$TFTP_URL/image/ios/$image'"
+    exit 1
+  }
 
   # md5 check
   action_syslog msg "AUTOCONF: Computing MD5 Image '$fstype$image' with md5 '$imagemd5'"
@@ -138,40 +135,46 @@ if { [string compare $image $rawimagef] == 0 } {
     puts "ERROR: The MD5 of the downloaded image is not the one that it should be, do you download your img from torrent :) ?"
     exit 1
   }
+
+  # Set the bootvar for the image
+  action_syslog msg "AUTOCONF: Setting BOOTVAR"
+  if { $image != {} } {
+      if { [catch {cli_exec $cli(fd) "config terminal"} result] } {
+        error $result $errorInfo
+      }
+
+      if { [catch {cli_exec $cli(fd) "boot system $fstype$image"} result] } {
+        error $result $errorInfo
+      }
+
+      if { [catch {cli_exec $cli(fd) "end"} result] } {
+        error $result $errorInfo
+      }
+  }
+  action_syslog msg "AUTOCONF: BOOTVAR set"
 }
 
+
 # Download the provisionned config in the startup config
-#( not the running - as we may not run the good IOS, some config migth not be applied )
-# and then, a fresh boot is always good :)
-action_syslog msg "AUTOCONF: Downloading the config for '$sn' at '$TFTP_URL/configs/FDxxxxxxxxF.confg
-'"
+#( not the running - as we may not run the good IOS, some config might not be applied )
+# and then, a config from a fresh boot is always better
 set config $sn.confg
+action_syslog msg "AUTOCONF: Downloading the config for '$sn' at '$TFTP_URL/configs/$config'"
 if { [catch {cli_exec $cli(fd) "copy $TFTP_URL/configs/$config startup-config"} result] } {
         error $result $errorInfo
 }
-action_syslog msg "AUTOCONF: Config for '$sn' saved in startup-config"
-
-action_syslog msg "AUTOCONF: Setting BOOTVAR"
-if { $image != {} } {
-    if { [catch {cli_exec $cli(fd) "config terminal"} result] } {
-        error $result $errorInfo
-    }
-
-    if { [catch {cli_exec $cli(fd) "boot system $fstype$image"} result] } {
-        error $result $errorInfo
-    }
-
-    if { [catch {cli_exec $cli(fd) "end"} result] } {
-        error $result $errorInfo
-    }
+if { [regexp {"bytes copied in"} $result] } {
+  action_syslog msg "AUTOCONF: Config for '$sn' saved in startup-config"
+} else {
+  action_syslog msg "AUTOCONF: Unable to fetch the config for '$sn' at '$TFTP_URL/configs/$config'"
+  action_syslog msg "AUTOCONF: Will continue in an endless power-cycle ZTP loop until I found my config"
 }
-action_syslog msg "AUTOCONF: BOOTVAR set"
 
 action_syslog msg "AUTOCONF COMPLETE: Switch is ready, go for a reload in 10secs"
 
-# Close VTY session
+# Clean close VTY session
 # Always put a sleep X sec ( in tcl 'after XX' where X is in msec )
-# without it, you can miss syslogs, so you might that all the step are not completed but yes they are
+# The box can exec the tcl faster than processing the syslogs.. 
 after 5000
 catch {cli_close $cli(fd) $cli(tty_id)}
 after 5000
